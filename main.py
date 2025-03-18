@@ -1,7 +1,11 @@
 import os
 import struct
 import textwrap
+import time
 from string import ascii_uppercase
+
+from PIL.ImageChops import offset
+
 
 #The get drives method finds all drives within the computer
 def GetDrives():
@@ -33,17 +37,54 @@ def getMFTOffset(drive):
         offset = MFTStartCluster * 4096
         return offset
 
+#The get boot sector details analyzes the boot sector and returns certain info about the system to be used later
+def getBootSectorDetails(drive):
+    with open(drive, 'rb') as sectorFile:
+        bootSectorData = sectorFile.read(512)
+        bytesPerSectorOut = struct.unpack('<H', bootSectorData[0x0B:0x0D])[0]
+        sectorsPerClusterOut = struct.unpack('<B', bootSectorData[0x0D:0x0E])[0]
+        MFTSectorSizeOut = sectorsPerClusterOut * bytesPerSectorOut
+        MFTOffsetOut = getMFTOffset(drive)
+        totalSectorsOut = struct.unpack('<Q', bootSectorData[0x28:0x30])[0]
+        totalClustersOut = totalSectorsOut/8
+        return bytesPerSectorOut, sectorsPerClusterOut, totalSectorsOut, totalClustersOut, MFTSectorSizeOut, MFTOffsetOut
+
+#The dissect MFT sector will take a drive and given offset and return given details about the MFT sector
+def dissectMFTSector(drivePath, offsetIN):
+    with open(drivePath, 'rb') as drive:
+        drive.seek(offsetIN)
+        sectorData = drive.read(512)
+
+        if sectorData[0:4] != b'FILE':
+            return
+
+        nameLength = struct.unpack('<B', sectorData[240:241])[0]
+        fileNameSpace = struct.unpack('<B', sectorData[241:242])[0]
+        rawName = struct.unpack(f'<{nameLength}s', sectorData[242:242 + nameLength])[0]
+        name = rawName.decode('utf-16', errors='ignore')
+        #print("Name Length: " + str(nameLength) + " Name: " + name)
+        if(name!=''):
+            print(name)
+
 if __name__ == "__main__":
     computerDrives = GetDrives()
     specialFolders = ["C:\\$Recycle.Bin"]
 
-    print(ReadSectorData(computerDrives[0], 0))
-    MFTOffset = getMFTOffset(computerDrives[0])
+    #Get the details of the boot sector for possible later use
+    bytesPerSector, sectorsPerCluster, totalSectors, totalClusters, MFTSectorSize, MFTOffset = getBootSectorDetails(computerDrives[0])
 
-    ReadSectorData(computerDrives[0], MFTOffset)
+    #Program start output
+    print("Drive details:\nBytes per sector: %d\nSectors per cluster: %d\nTotal sectors: %d\nTotal clusters: %d\nMFT Offset: %d"
+          % (bytesPerSector, sectorsPerCluster, totalSectors,totalClusters,MFTOffset))
+    print("Starting in 3 seconds...")
+    time.sleep(3)
 
-#TODO:
-#1. Fully analyze the boot sector to grab proper info on the filesystem, size, sectors quantity, cluster quantity, etc.
-#2. Create method for grabbing key pieces of data, if file is existent 4E 54 46 53, title if possible, pointers to next
-#   sector of file, etc.
-#3. Create method for recording info of file if it is deleted
+    #print(ReadSectorData(computerDrives[0], 0))
+    #dissectMFTSector(computerDrives[0], offset=MFTSectorSize)
+
+    for offset in range(MFTOffset, totalSectors*bytesPerSector, bytesPerSector):
+        #print(ReadSectorData(computerDrives[0], offset))
+        dissectMFTSector(computerDrives[0], offset)
+
+#TODO
+#1. Further complete the MFT sector Dissect to get file name
