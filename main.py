@@ -2,6 +2,7 @@ import os
 import struct
 import textwrap
 import time
+import threading
 from string import ascii_uppercase
 
 from PIL.ImageChops import offset
@@ -49,22 +50,37 @@ def getBootSectorDetails(drive):
         totalClustersOut = totalSectorsOut/8
         return bytesPerSectorOut, sectorsPerClusterOut, totalSectorsOut, totalClustersOut, MFTSectorSizeOut, MFTOffsetOut
 
+def getFileName(sectorDataIN):
+    try:
+        fileNameLength = int.from_bytes(struct.unpack('<I', sectorDataIN[168:172]), 'little')
+        rawFileName = sectorDataIN[176 + 0x42:176 + fileNameLength]
+        name = rawFileName.decode('utf-16-le', errors='replace')
+
+        return name
+    except:
+        return ""
+
 #The dissect MFT sector will take a drive and given offset and return given details about the MFT sector
 def dissectMFTSector(drivePath, offsetIN):
+    name = ""
+    isDeleted = False
+
     with open(drivePath, 'rb') as drive:
         drive.seek(offsetIN)
-        sectorData = drive.read(512)
+        sectorData = drive.read(1024)
 
         if sectorData[0:4] != b'FILE':
             return
 
-        nameLength = struct.unpack('<B', sectorData[240:241])[0]
-        fileNameSpace = struct.unpack('<B', sectorData[241:242])[0]
-        rawName = struct.unpack(f'<{nameLength}s', sectorData[242:242 + nameLength])[0]
-        name = rawName.decode('utf-16', errors='ignore')
-        #print("Name Length: " + str(nameLength) + " Name: " + name)
-        if(name!=''):
-            print(name)
+        name = getFileName(sectorData)
+
+        isDeleted = int.from_bytes(struct.unpack('<B', sectorData[0x16:0x17]), 'little') == 0
+
+        if(name!='' and name!='.'):
+            if(isDeleted):
+                print("Name: " + name + ", DELETED")
+            #else:
+                #print("Name: " + name + ", NOT DELETED")
 
 if __name__ == "__main__":
     computerDrives = GetDrives()
@@ -79,12 +95,13 @@ if __name__ == "__main__":
     print("Starting in 3 seconds...")
     time.sleep(3)
 
-    #print(ReadSectorData(computerDrives[0], 0))
-    #dissectMFTSector(computerDrives[0], offset=MFTSectorSize)
 
-    for offset in range(MFTOffset, totalSectors*bytesPerSector, bytesPerSector):
-        #print(ReadSectorData(computerDrives[0], offset))
+    import sys
+    print("MFT Offset: " + str(MFTOffset) + ", Size: " + str(totalSectors*512))
+    for offset in range(MFTOffset, totalSectors*bytesPerSector, 1024):
+        sys.stdout.write(f"\rOffset: {offset} " + str((offset/(totalSectors*512))*100) + "% ")  # Overwrite the line
+        sys.stdout.flush()  # Force immediate output
         dissectMFTSector(computerDrives[0], offset)
 
 #TODO
-#1. Further complete the MFT sector Dissect to get file name
+#1. Optimize search pattern to speed up physical searching
